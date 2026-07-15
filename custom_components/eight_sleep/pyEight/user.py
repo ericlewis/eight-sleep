@@ -31,6 +31,7 @@ class EightUser:  # pylint: disable=too-many-public-methods
         self.side = side
         self._user_profile: dict[str, Any] = {}
         self._base_data: dict[str, Any] = {}
+        self._snoring_mitigation: dict[str, Any] | None = None
         self.trends: list[dict[str, Any]] = []
         self.routines: list[dict[str, Any]] = []
         self.next_alarm = None
@@ -909,37 +910,73 @@ class EightUser:  # pylint: disable=too-many-public-methods
         if self.device.has_base:
             url = f"{APP_API_URL}v1/users/{self.user_id}/base"
             self._base_data = await self.device.api_request("GET", url)
+            await self.update_snoring_mitigation()
+
+    @property
+    def snoring_mitigation(self) -> dict[str, Any] | None:
+        """Return the cached authoritative snoring mitigation settings."""
+        return self._snoring_mitigation
+
+    async def update_snoring_mitigation(self) -> None:
+        """Refresh authoritative snoring mitigation settings without losing cache on error."""
+        url = f"{APP_API_URL}v1/users/{self.user_id}/autopilotDetails/snoringMitigation"
+        response = await self.device.api_request("GET", url)
+        settings = (response or {}).get("snoringMitigation")
+        if isinstance(settings, dict) and "enabled" in settings and "mitigationLevel" in settings:
+            self._snoring_mitigation = {
+                "enabled": bool(settings["enabled"]),
+                "mitigationLevel": settings["mitigationLevel"],
+            }
+
+    async def set_snoring_mitigation(self, enabled: bool, mitigation_level: str) -> None:
+        """Atomically set enabled state and level, always sending both fields."""
+        if mitigation_level not in {"low", "medium", "high"}:
+            raise ValueError("mitigation_level must be low, medium, or high")
+        if not self.device.has_base:
+            return
+        url = f"{APP_API_URL}v1/users/{self.user_id}/autopilotDetails/snoringMitigation"
+        payload = {"snoringMitigation": {"enabled": enabled, "mitigationLevel": mitigation_level}}
+        response = await self.device.api_request("PUT", url, data=payload)
+        settings = (response or {}).get("snoringMitigation") if isinstance(response, dict) else None
+        if isinstance(settings, dict) and "enabled" in settings and "mitigationLevel" in settings:
+            self._snoring_mitigation = {
+                "enabled": bool(settings["enabled"]),
+                "mitigationLevel": settings["mitigationLevel"],
+            }
+        else:
+            await self.update_snoring_mitigation()
 
     async def set_base_angle(self, leg_angle: int, torso_angle: int) -> None:
         """Set the angles of the bed base."""
         if self.device.has_base:
-            # Update the angles locally
-            self.base_data_for_side["leg"]["currentAngle"] = leg_angle
-            self.base_data_for_side["torso"]["currentAngle"] = torso_angle
-
             url = f"{APP_API_URL}v1/users/{self.user_id}/base/angle?ignoreDeviceErrors=false"
-            payload = {
-                "deviceId": self.device.device_id,
-                "deviceOnline": True,
-                "legAngle": leg_angle,
-                "torsoAngle": torso_angle,
-                "enableOfflineMode": False
-            }
+            payload = {"legAngle": leg_angle, "torsoAngle": torso_angle}
             await self.device.api_request("POST", url, data=payload, return_json=False)
+            await self.update_base_data()
 
     async def set_base_preset(self, preset: str) -> None:
         """Set the preset of the bed base."""
         if self.device.has_base:
-            # Update the preset locally
-            # Note: The preset goes missing from the local data when a custom angle is used
-            # and it also goes missing after some time
-            self.base_data_for_side.setdefault("preset", {})["name"] = preset
-
             url = f"{APP_API_URL}v1/users/{self.user_id}/base/angle?ignoreDeviceErrors=false"
-            payload = {
-                "deviceId": self.device.device_id,
-                "deviceOnline": True,
-                "preset": preset,
-                "enableOfflineMode": False
-            }
+            payload = {"preset": preset, "snoreMitigation": False}
             await self.device.api_request("POST", url, data=payload, return_json=False)
+            await self.update_base_data()
+
+    async def play_soundscape(self) -> None:
+        """Start Base soundscape playback.
+
+        The Base API uses an inverted command value: the play action sends
+        ``paused`` and the device responds by starting playback.
+        """
+        await self._set_soundscape_state("paused")
+
+    async def pause_soundscape(self) -> None:
+        """Pause Base soundscape playback (using the API's inverted value)."""
+        await self._set_soundscape_state("playing")
+
+    async def _set_soundscape_state(self, state: str) -> None:
+        """Send a command-only soundscape state to the Base player."""
+        if not self.device.has_base:
+            return
+        url = f"{APP_API_URL}v1/users/{self.user_id}/audio/player/state"
+        await self.device.api_request("PUT", url, data={"state": state}, return_json=False)
