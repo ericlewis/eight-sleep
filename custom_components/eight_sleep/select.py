@@ -1,4 +1,4 @@
-from typing import Callable
+from collections.abc import Awaitable, Callable
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -20,7 +20,9 @@ BASE_PRESET_DESCRIPTION = SelectEntityDescription(
     options=PRESETS,
 )
 SNORING_LEVEL_DESCRIPTION = SelectEntityDescription(
-    key="snoring_mitigation_level", name="Snoring Mitigation Level", icon="mdi:snore",
+    key="snoring_mitigation_level",
+    name="Snoring Mitigation Level",
+    icon="mdi:snore",
     options=MITIGATION_LEVELS,
 )
 
@@ -35,7 +37,7 @@ async def async_setup_entry(
 
     user = eight.base_user
     if user:
-        async def set_preset(value):
+        async def set_preset(value: str) -> None:
             await user.set_base_preset(value)
 
         entities.append(EightSelectEntity(
@@ -70,7 +72,7 @@ class EightSelectEntity(EightSleepBaseEntity, SelectEntity):
         user: EightUser,
         entity_description: SelectEntityDescription,
         value_getter: Callable[[], str | None],
-        set_value_callback: Callable[[str], None],
+        set_value_callback: Callable[[str], Awaitable[None]],
         options: list[str] | None = None,
         name: str | None = None,
     ) -> None:

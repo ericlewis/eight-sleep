@@ -910,7 +910,10 @@ class EightUser:  # pylint: disable=too-many-public-methods
         if self.device.has_base:
             url = f"{APP_API_URL}v1/users/{self.user_id}/base"
             self._base_data = await self.device.api_request("GET", url)
-            await self.update_snoring_mitigation()
+            try:
+                await self.update_snoring_mitigation()
+            except Exception as err:
+                _LOGGER.warning("Unable to refresh optional snoring mitigation: %s", err)
 
     @property
     def snoring_mitigation(self) -> dict[str, Any] | None:

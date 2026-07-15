@@ -145,8 +145,21 @@ class EightSwitchEntity(EightSleepBaseEntity, SwitchEntity):
 class EightSnoringMitigationSwitch(EightSleepBaseEntity, SwitchEntity):
     """Atomic Base snoring mitigation enable/disable control."""
 
-    def __init__(self, entry, coordinator, eight, user):
-        super().__init__(entry, coordinator, eight, user, "snoring_mitigation_enabled", base_entity=True)
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        coordinator: DataUpdateCoordinator,
+        eight: EightSleep,
+        user: EightUser,
+    ) -> None:
+        super().__init__(
+            entry,
+            coordinator,
+            eight,
+            user,
+            "snoring_mitigation_enabled",
+            base_entity=True,
+        )
         self._attr_name = "Snoring Mitigation"
 
     @property
