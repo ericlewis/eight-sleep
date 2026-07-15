@@ -249,9 +249,16 @@ class EightSleep:
 
     @property
     def base_user(self) -> EightUser | None:
-        """Return the user object for the base."""
+        """Return the stable user object used for shared Base controls."""
         if self.has_base:
-            return next(iter(self.users.values()))
+            # Base state is shared by the device, while command endpoints still
+            # require a user id. Prefer the left side, then sort by side/id so
+            # insertion order cannot change which account receives commands.
+            return min(
+                self.users.values(),
+                key=lambda user: (user.side != "left", user.side, user.user_id),
+                default=None,
+            )
 
     async def start(self) -> bool:
         """Start api initialization."""

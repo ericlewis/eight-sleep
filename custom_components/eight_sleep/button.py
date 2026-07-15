@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -37,10 +39,18 @@ async def async_setup_entry(
         async_add_entities([])
         return
 
-    async_add_entities([
-        BaseSoundscapeButton(entry, data.base_coordinator, eight, user, PLAY_DESCRIPTION, user.play_soundscape),
-        BaseSoundscapeButton(entry, data.base_coordinator, eight, user, PAUSE_DESCRIPTION, user.pause_soundscape),
-    ])
+    async_add_entities(
+        [
+            BaseSoundscapeButton(
+                entry, data.base_coordinator, eight, user,
+                PLAY_DESCRIPTION, user.play_soundscape,
+            ),
+            BaseSoundscapeButton(
+                entry, data.base_coordinator, eight, user,
+                PAUSE_DESCRIPTION, user.pause_soundscape,
+            ),
+        ]
+    )
 
 
 class BaseSoundscapeButton(EightSleepBaseEntity, ButtonEntity):
@@ -53,7 +63,7 @@ class BaseSoundscapeButton(EightSleepBaseEntity, ButtonEntity):
         eight: EightSleep,
         user: EightUser,
         description: ButtonEntityDescription,
-        command,
+        command: Callable[[], Awaitable[None]],
     ) -> None:
         super().__init__(entry, coordinator, eight, user, description.key, base_entity=True)
         self.entity_description = description

@@ -115,10 +115,14 @@ async def async_setup_entry(
         )
 
     if eight.has_base:
-        for user in eight.users.values():
+        if (base_user := eight.base_user) is not None:
             entities.extend((
-                EightBasePositionNumberEntity(entry, config_data.base_coordinator, eight, user, "feet_angle"),
-                EightBasePositionNumberEntity(entry, config_data.base_coordinator, eight, user, "head_angle"),
+                EightBasePositionNumberEntity(
+                    entry, config_data.base_coordinator, eight, base_user, "feet_angle"
+                ),
+                EightBasePositionNumberEntity(
+                    entry, config_data.base_coordinator, eight, base_user, "head_angle"
+                ),
             ))
 
     async_add_entities(entities)
@@ -127,7 +131,14 @@ async def async_setup_entry(
 class EightBasePositionNumberEntity(EightSleepBaseEntity, NumberEntity):
     """Control one of the two paired Base elevation angles."""
 
-    def __init__(self, entry, coordinator, eight, user, angle_type: str) -> None:
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        coordinator: DataUpdateCoordinator,
+        eight: EightSleep,
+        user: EightUser,
+        angle_type: str,
+    ) -> None:
         super().__init__(entry, coordinator, eight, user, angle_type, base_entity=True)
         self._angle_type = angle_type
         self._attr_name = "Feet Angle" if angle_type == "feet_angle" else "Head Angle"
@@ -139,7 +150,11 @@ class EightBasePositionNumberEntity(EightSleepBaseEntity, NumberEntity):
 
     @property
     def native_value(self) -> float | None:
-        return self._user_obj.leg_angle if self._angle_type == "feet_angle" else self._user_obj.torso_angle
+        return (
+            self._user_obj.leg_angle
+            if self._angle_type == "feet_angle"
+            else self._user_obj.torso_angle
+        )
 
     async def async_set_native_value(self, value: float) -> None:
         leg = round(value) if self._angle_type == "feet_angle" else self._user_obj.leg_angle

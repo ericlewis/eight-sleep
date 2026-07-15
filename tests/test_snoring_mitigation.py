@@ -10,6 +10,8 @@ pkg.__path__ = [str(pathlib.Path(__file__).parents[1] / "custom_components/eight
 sys.modules.setdefault("custom_components.eight_sleep", pkg)
 spec = importlib.util.spec_from_file_location("custom_components.eight_sleep.pyEight.user", pathlib.Path(__file__).parents[1] / "custom_components/eight_sleep/pyEight/user.py")
 mod = importlib.util.module_from_spec(spec); sys.modules[spec.name] = mod; spec.loader.exec_module(mod)
+if sys.modules.get("custom_components.eight_sleep") is pkg:
+    del sys.modules["custom_components.eight_sleep"]
 
 class Device:
     has_base = True

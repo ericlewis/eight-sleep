@@ -16,6 +16,9 @@ user_module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = user_module
 spec.loader.exec_module(user_module)
 EightUser = user_module.EightUser
+# Do not leave the temporary package stub installed for later test modules.
+if sys.modules.get("custom_components.eight_sleep") is pkg:
+    del sys.modules["custom_components.eight_sleep"]
 
 
 class FakeDevice:
