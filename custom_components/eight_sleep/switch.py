@@ -59,6 +59,11 @@ async def async_setup_entry(
             user,
             description))
 
+    if eight.base_user:
+        entities.append(EightSnoringMitigationSwitch(
+            entry, config_entry_data.base_coordinator, eight, eight.base_user
+        ))
+
     async_add_entities(entities)
 
 class EightSwitchEntity(EightSleepBaseEntity, SwitchEntity):
@@ -135,3 +140,33 @@ class EightSwitchEntity(EightSleepBaseEntity, SwitchEntity):
     def _handle_coordinator_update(self) -> None:
         self._update_attributes()
         super()._handle_coordinator_update()
+
+
+class EightSnoringMitigationSwitch(EightSleepBaseEntity, SwitchEntity):
+    """Atomic Base snoring mitigation enable/disable control."""
+
+    def __init__(self, entry, coordinator, eight, user):
+        super().__init__(entry, coordinator, eight, user, "snoring_mitigation_enabled", base_entity=True)
+        self._attr_name = "Snoring Mitigation"
+
+    @property
+    def available(self) -> bool:
+        return self._user_obj is not None and self._user_obj.snoring_mitigation is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        settings = self._user_obj.snoring_mitigation if self._user_obj else None
+        return settings.get("enabled") if settings else None
+
+    async def _set_enabled(self, enabled: bool) -> None:
+        settings = self._user_obj.snoring_mitigation if self._user_obj else None
+        if settings is None:
+            return
+        await self._user_obj.set_snoring_mitigation(enabled, settings["mitigationLevel"])
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._set_enabled(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._set_enabled(False)

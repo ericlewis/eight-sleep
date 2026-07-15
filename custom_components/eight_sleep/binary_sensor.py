@@ -55,13 +55,20 @@ BINARY_SENSORS = [
     "routine_enabled",
 ]
 
+_DEVICE_BACKED_BINARY_SENSORS = {
+    "away_mode_active",
+    "alarm_enabled",
+    "alarm_ringing",
+    "alarm_dismissed",
+    "alarm_stopped",
+}
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the Eight Sleep Binary Sensors."""
     config_data: EightSleepConfigEntryData = hass.data[DOMAIN][entry.entry_id]
-    coordinator = config_data.coordinator
-    eight = config_data.eight
+    eight = config_data.api
 
     entities = []
 
@@ -71,7 +78,11 @@ async def async_setup_entry(
             entities.append(
                 EightBinarySensor(
                     entry,
-                    coordinator,
+                    (
+                        config_data.device_coordinator
+                        if sensor_type in _DEVICE_BACKED_BINARY_SENSORS
+                        else config_data.user_coordinator
+                    ),
                     eight,
                     user,
                     sensor_type,
@@ -83,11 +94,17 @@ async def async_setup_entry(
         entities.append(
             EightDeviceBinarySensor(
                 entry,
-                coordinator,
+                config_data.device_coordinator,
                 eight,
                 sensor_type,
             )
         )
+
+    if eight.base_user:
+        entities.append(EightBinarySensor(
+            entry, config_data.base_coordinator, eight, eight.base_user,
+            "snoring_mitigation_active", base_entity=True,
+        ))
 
     async_add_entities(entities)
 
@@ -102,12 +119,12 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
         eight: EightSleep,
         user: EightUser,
         sensor_type: str,
+        base_entity: bool = False,
     ) -> None:
         """Initialize the binary sensor."""
-        super().__init__(entry, coordinator, eight, user)
+        super().__init__(entry, coordinator, eight, user, sensor_type, base_entity=base_entity)
         self._sensor_type = sensor_type
-        self._attr_name = f"{self._user.side} {self._get_sensor_name(sensor_type)}"
-        self._attr_unique_id = f"{self._user.user_id}_{sensor_type}"
+        self._attr_name = f"{self._user_obj.side} {self._get_sensor_name(sensor_type)}"
         
         # Set device class based on sensor type
         self._set_sensor_properties(sensor_type)
@@ -145,6 +162,7 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
             "configuration_changed": "Configuration Changed",
             "schedule_active": "Schedule Active",
             "routine_enabled": "Routine Enabled",
+            "snoring_mitigation_active": "Snoring Mitigation Active",
         }
         return name_map.get(sensor_type, sensor_type.replace("_", " ").title())
 
@@ -168,12 +186,12 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return true if the binary sensor is on."""
-        if not self._user:
+        if not self._user_obj:
             return None
 
         try:
             if self._sensor_type == "bed_presence":
-                return self._user.bed_presence
+                return self._user_obj.bed_presence
             elif self._sensor_type == "away_mode_active":
                 return self._get_away_mode_active()
             elif self._sensor_type == "alarm_enabled":
@@ -187,7 +205,9 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
             elif self._sensor_type == "sleep_tracking_enabled":
                 return self._get_sleep_tracking_enabled()
             elif self._sensor_type == "session_processing":
-                return self._user.current_session_processing
+                return self._user_obj.current_session_processing
+            elif self._sensor_type == "snoring_mitigation_active":
+                return self._user_obj.base_data_for_side.get("inSnoreMitigation")
             else:
                 return None
         except Exception as e:
@@ -199,7 +219,7 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
         try:
             if self._eight.device_data:
                 away_sides = self._eight.device_data.get("awaySides", {})
-                return self._user.side in away_sides
+                return self._user_obj.side in away_sides
         except Exception as e:
             _LOGGER.error(f"Error getting away mode active: {e}")
         return False
@@ -209,7 +229,7 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
         try:
             if self._eight.device_data:
                 alarms = self._eight.device_data.get("alarms", {})
-                side_alarms = alarms.get(self._user.side, [])
+                side_alarms = alarms.get(self._user_obj.side, [])
                 if side_alarms:
                     return side_alarms[0].get("enabled", False)
         except Exception as e:
@@ -221,7 +241,7 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
         try:
             if self._eight.device_data:
                 alarms = self._eight.device_data.get("alarms", {})
-                side_alarms = alarms.get(self._user.side, [])
+                side_alarms = alarms.get(self._user_obj.side, [])
                 if side_alarms:
                     return side_alarms[0].get("ringing", False)
         except Exception as e:
@@ -233,7 +253,7 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
         try:
             if self._eight.device_data:
                 alarms = self._eight.device_data.get("alarms", {})
-                side_alarms = alarms.get(self._user.side, [])
+                side_alarms = alarms.get(self._user_obj.side, [])
                 if side_alarms:
                     return side_alarms[0].get("dismissed", False)
         except Exception as e:
@@ -245,7 +265,7 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
         try:
             if self._eight.device_data:
                 alarms = self._eight.device_data.get("alarms", {})
-                side_alarms = alarms.get(self._user.side, [])
+                side_alarms = alarms.get(self._user_obj.side, [])
                 if side_alarms:
                     return side_alarms[0].get("stopped", False)
         except Exception as e:
@@ -255,8 +275,8 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
     def _get_sleep_tracking_enabled(self) -> bool:
         """Get sleep tracking enabled status."""
         try:
-            if self._user.user_profile:
-                return self._user.user_profile.get("sleepTracking", {}).get("enabled", True)
+            if self._user_obj.user_profile:
+                return self._user_obj.user_profile.get("sleepTracking", {}).get("enabled", True)
         except Exception as e:
             _LOGGER.error(f"Error getting sleep tracking enabled: {e}")
         return False
@@ -264,12 +284,12 @@ class EightBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return entity specific state attributes."""
-        if not self._user:
+        if not self._user_obj:
             return None
 
         attrs = {
-            "side": self._user.side,
-            "user_id": self._user.user_id,
+            "side": self._user_obj.side,
+            "user_id": self._user_obj.user_id,
             "sensor_type": self._sensor_type,
         }
 
@@ -287,10 +307,9 @@ class EightDeviceBinarySensor(EightSleepBaseEntity, BinarySensorEntity):
         sensor_type: str,
     ) -> None:
         """Initialize the device binary sensor."""
-        super().__init__(entry, coordinator, eight, None)  # No user for device sensors
+        super().__init__(entry, coordinator, eight, None, sensor_type)
         self._sensor_type = sensor_type
         self._attr_name = f"Eight Sleep {self._get_sensor_name(sensor_type)}"
-        self._attr_unique_id = f"device_{sensor_type}"
         
         # Set device class based on sensor type
         self._set_sensor_properties(sensor_type)

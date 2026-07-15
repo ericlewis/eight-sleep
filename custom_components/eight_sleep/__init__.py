@@ -46,6 +46,7 @@ from .error_messages import get_user_friendly_error, create_notification_data, g
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [
+    Platform.BUTTON,
     Platform.BINARY_SENSOR,
     Platform.CLIMATE,
     Platform.NUMBER,
@@ -315,7 +316,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await _async_retry_with_backoff(device_coordinator.async_config_entry_first_refresh)
         await _async_retry_with_backoff(user_coordinator.async_config_entry_first_refresh)
-        await _async_retry_with_backoff(base_coordinator.async_config_entry_first_refresh)
+        if eight.base_user:
+            await _async_retry_with_backoff(
+                base_coordinator.async_config_entry_first_refresh
+            )
     except Exception as err:
         _LOGGER.error("Failed to initialize coordinators: %s", err)
         raise ConfigEntryNotReady from err
@@ -355,9 +359,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         base_hardware_info = eight.base_user.base_data.get("hardwareInfo", {})
         base_device_data = {
             ATTR_MANUFACTURER: "Eight Sleep",
-            ATTR_MODEL: base_hardware_info['sku'],
-            ATTR_HW_VERSION: base_hardware_info['hardwareVersion'],
-            ATTR_SW_VERSION: base_hardware_info['softwareVersion'],
+            ATTR_MODEL: base_hardware_info.get("sku", UNDEFINED),
+            ATTR_HW_VERSION: base_hardware_info.get("hardwareVersion", UNDEFINED),
+            ATTR_SW_VERSION: base_hardware_info.get("softwareVersion", UNDEFINED),
         }
 
         dev_reg.async_get_or_create(

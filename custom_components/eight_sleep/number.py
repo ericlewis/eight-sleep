@@ -69,13 +69,20 @@ NUMBER_ENTITIES = [
     "routine_score",
 ]
 
+_DEVICE_BACKED_NUMBER_ENTITIES = {
+    "presence_duration",
+    "away_duration",
+    "alarm_snooze_duration",
+    "alarm_volume",
+    "alarm_brightness",
+}
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the Eight Sleep Number entities."""
     config_data: EightSleepConfigEntryData = hass.data[DOMAIN][entry.entry_id]
-    coordinator = config_data.coordinator
-    eight = config_data.eight
+    eight = config_data.api
 
     entities = []
 
@@ -85,7 +92,11 @@ async def async_setup_entry(
             entities.append(
                 EightNumberEntity(
                     entry,
-                    coordinator,
+                    (
+                        config_data.device_coordinator
+                        if entity_type in _DEVICE_BACKED_NUMBER_ENTITIES
+                        else config_data.user_coordinator
+                    ),
                     eight,
                     user,
                     entity_type,
@@ -97,13 +108,44 @@ async def async_setup_entry(
         entities.append(
             EightDeviceNumberEntity(
                 entry,
-                coordinator,
+                config_data.device_coordinator,
                 eight,
                 entity_type,
             )
         )
 
+    if eight.has_base:
+        for user in eight.users.values():
+            entities.extend((
+                EightBasePositionNumberEntity(entry, config_data.base_coordinator, eight, user, "feet_angle"),
+                EightBasePositionNumberEntity(entry, config_data.base_coordinator, eight, user, "head_angle"),
+            ))
+
     async_add_entities(entities)
+
+
+class EightBasePositionNumberEntity(EightSleepBaseEntity, NumberEntity):
+    """Control one of the two paired Base elevation angles."""
+
+    def __init__(self, entry, coordinator, eight, user, angle_type: str) -> None:
+        super().__init__(entry, coordinator, eight, user, angle_type, base_entity=True)
+        self._angle_type = angle_type
+        self._attr_name = "Feet Angle" if angle_type == "feet_angle" else "Head Angle"
+        self._attr_native_unit_of_measurement = "°"
+        self._attr_native_min_value = 0
+        self._attr_native_max_value = 20 if angle_type == "feet_angle" else 45
+        self._attr_native_step = 1
+        self._attr_mode = NumberMode.SLIDER
+
+    @property
+    def native_value(self) -> float | None:
+        return self._user_obj.leg_angle if self._angle_type == "feet_angle" else self._user_obj.torso_angle
+
+    async def async_set_native_value(self, value: float) -> None:
+        leg = round(value) if self._angle_type == "feet_angle" else self._user_obj.leg_angle
+        torso = round(value) if self._angle_type == "head_angle" else self._user_obj.torso_angle
+        await self._user_obj.set_base_angle(leg, torso)
+        await self.coordinator.async_request_refresh()
 
 
 class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
@@ -118,10 +160,9 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
         entity_type: str,
     ) -> None:
         """Initialize the number entity."""
-        super().__init__(entry, coordinator, eight, user)
+        super().__init__(entry, coordinator, eight, user, entity_type)
         self._entity_type = entity_type
-        self._attr_name = f"{self._user.side} {self._get_entity_name(entity_type)}"
-        self._attr_unique_id = f"{self._user.user_id}_{entity_type}"
+        self._attr_name = f"{self._user_obj.side} {self._get_entity_name(entity_type)}"
         
         # Set device class, unit, and mode based on entity type
         self._set_entity_properties(entity_type)
@@ -225,36 +266,36 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
     @property
     def native_value(self) -> float | None:
         """Return the value of the number entity."""
-        if not self._user:
+        if not self._user_obj:
             return None
 
         try:
             if self._entity_type == "target_heating_level":
-                return self._user.target_heating_level
+                return self._user_obj.target_heating_level
             elif self._entity_type == "heating_level":
-                return self._user.heating_level
+                return self._user_obj.heating_level
             elif self._entity_type == "target_temperature":
-                return self._user.target_bed_temperature
+                return self._user_obj.target_bed_temperature
             elif self._entity_type == "current_temperature":
-                return self._user.current_bed_temperature
+                return self._user_obj.current_bed_temperature
             elif self._entity_type == "room_temperature":
                 return self._eight.room_temperature
             elif self._entity_type == "sleep_duration":
-                return self._user.time_slept
+                return self._user_obj.time_slept
             elif self._entity_type == "sleep_latency":
                 return self._get_sleep_latency()
             elif self._entity_type == "sleep_efficiency":
                 return self._get_sleep_efficiency()
             elif self._entity_type == "sleep_quality":
-                return self._user.current_sleep_quality_score
+                return self._user_obj.current_sleep_quality_score
             elif self._entity_type == "sleep_score":
-                return self._user.current_sleep_fitness_score
+                return self._user_obj.current_sleep_fitness_score
             elif self._entity_type == "heart_rate":
-                return self._user.current_heart_rate
+                return self._user_obj.current_heart_rate
             elif self._entity_type == "respiratory_rate":
-                return self._user.current_resp_rate
+                return self._user_obj.current_resp_rate
             elif self._entity_type == "hrv_value":
-                return self._user.current_hrv
+                return self._user_obj.current_hrv
             elif self._entity_type == "presence_duration":
                 return self._get_presence_duration()
             elif self._entity_type == "away_duration":
@@ -274,8 +315,8 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
     def _get_sleep_latency(self) -> float | None:
         """Get sleep latency."""
         try:
-            if self._user.trends and len(self._user.trends) > 0:
-                current_trend = self._user.trends[-1]
+            if self._user_obj.trends and len(self._user_obj.trends) > 0:
+                current_trend = self._user_obj.trends[-1]
                 return current_trend.get("sleepLatency")
         except Exception as e:
             _LOGGER.error(f"Error getting sleep latency: {e}")
@@ -284,8 +325,8 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
     def _get_sleep_efficiency(self) -> float | None:
         """Get sleep efficiency."""
         try:
-            if self._user.trends and len(self._user.trends) > 0:
-                current_trend = self._user.trends[-1]
+            if self._user_obj.trends and len(self._user_obj.trends) > 0:
+                current_trend = self._user_obj.trends[-1]
                 return current_trend.get("sleepEfficiency")
         except Exception as e:
             _LOGGER.error(f"Error getting sleep efficiency: {e}")
@@ -294,8 +335,8 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
     def _get_presence_duration(self) -> float | None:
         """Get presence duration."""
         try:
-            if self._user.trends and len(self._user.trends) > 0:
-                current_trend = self._user.trends[-1]
+            if self._user_obj.trends and len(self._user_obj.trends) > 0:
+                current_trend = self._user_obj.trends[-1]
                 return current_trend.get("presenceDuration")
         except Exception as e:
             _LOGGER.error(f"Error getting presence duration: {e}")
@@ -304,8 +345,8 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
     def _get_away_duration(self) -> float | None:
         """Get away duration."""
         try:
-            if self._user.trends and len(self._user.trends) > 0:
-                current_trend = self._user.trends[-1]
+            if self._user_obj.trends and len(self._user_obj.trends) > 0:
+                current_trend = self._user_obj.trends[-1]
                 return current_trend.get("awayDuration")
         except Exception as e:
             _LOGGER.error(f"Error getting away duration: {e}")
@@ -316,7 +357,7 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
         try:
             if self._eight.device_data:
                 alarms = self._eight.device_data.get("alarms", {})
-                side_alarms = alarms.get(self._user.side, [])
+                side_alarms = alarms.get(self._user_obj.side, [])
                 if side_alarms:
                     return side_alarms[0].get("snoozeDuration", 0)
         except Exception as e:
@@ -328,7 +369,7 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
         try:
             if self._eight.device_data:
                 alarms = self._eight.device_data.get("alarms", {})
-                side_alarms = alarms.get(self._user.side, [])
+                side_alarms = alarms.get(self._user_obj.side, [])
                 if side_alarms:
                     return side_alarms[0].get("volume", 50)
         except Exception as e:
@@ -340,7 +381,7 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
         try:
             if self._eight.device_data:
                 alarms = self._eight.device_data.get("alarms", {})
-                side_alarms = alarms.get(self._user.side, [])
+                side_alarms = alarms.get(self._user_obj.side, [])
                 if side_alarms:
                     return side_alarms[0].get("brightness", 50)
         except Exception as e:
@@ -351,11 +392,11 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
         """Set the value of the number entity."""
         try:
             if self._entity_type == "target_heating_level":
-                await self._user.set_heating_level(int(value))
+                await self._user_obj.set_heating_level(int(value))
             elif self._entity_type == "target_temperature":
-                await self._user.set_target_bed_temperature(value)
+                await self._user_obj.set_target_bed_temperature(value)
             elif self._entity_type == "alarm_snooze_duration":
-                await self._user.alarm_snooze(int(value))
+                await self._user_obj.alarm_snooze(int(value))
             elif self._entity_type == "alarm_volume":
                 await self._set_alarm_volume(int(value))
             elif self._entity_type == "alarm_brightness":
@@ -368,7 +409,7 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
         try:
             if self._eight.device_data:
                 alarms = self._eight.device_data.get("alarms", {})
-                side_alarms = alarms.get(self._user.side, [])
+                side_alarms = alarms.get(self._user_obj.side, [])
                 if side_alarms:
                     side_alarms[0]["volume"] = volume
         except Exception as e:
@@ -379,7 +420,7 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
         try:
             if self._eight.device_data:
                 alarms = self._eight.device_data.get("alarms", {})
-                side_alarms = alarms.get(self._user.side, [])
+                side_alarms = alarms.get(self._user_obj.side, [])
                 if side_alarms:
                     side_alarms[0]["brightness"] = brightness
         except Exception as e:
@@ -388,12 +429,12 @@ class EightNumberEntity(EightSleepBaseEntity, NumberEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return entity specific state attributes."""
-        if not self._user:
+        if not self._user_obj:
             return None
 
         attrs = {
-            "side": self._user.side,
-            "user_id": self._user.user_id,
+            "side": self._user_obj.side,
+            "user_id": self._user_obj.user_id,
             "entity_type": self._entity_type,
         }
 
@@ -411,10 +452,9 @@ class EightDeviceNumberEntity(EightSleepBaseEntity, NumberEntity):
         entity_type: str,
     ) -> None:
         """Initialize the device number entity."""
-        super().__init__(entry, coordinator, eight, None)  # No user for device entities
+        super().__init__(entry, coordinator, eight, None, entity_type)
         self._entity_type = entity_type
         self._attr_name = f"Eight Sleep {self._get_entity_name(entity_type)}"
-        self._attr_unique_id = f"device_{entity_type}"
         
         # Set device class, unit, and mode based on entity type
         self._set_entity_properties(entity_type)
