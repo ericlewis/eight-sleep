@@ -164,7 +164,11 @@ class EightSnoringMitigationSwitch(EightSleepBaseEntity, SwitchEntity):
 
     @property
     def available(self) -> bool:
-        return self._user_obj is not None and self._user_obj.snoring_mitigation is not None
+        return (
+            super().available
+            and self._user_obj is not None
+            and self._user_obj.snoring_mitigation is not None
+        )
 
     @property
     def is_on(self) -> bool | None:

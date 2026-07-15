@@ -90,7 +90,11 @@ class EightSelectEntity(EightSleepBaseEntity, SelectEntity):
     @property
     def available(self) -> bool:
         if self.entity_description.key == "snoring_mitigation_level":
-            return self._user_obj is not None and self._user_obj.snoring_mitigation is not None
+            return (
+                super().available
+                and self._user_obj is not None
+                and self._user_obj.snoring_mitigation is not None
+            )
         return super().available
 
     async def async_select_option(self, option: str) -> None:

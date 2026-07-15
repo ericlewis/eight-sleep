@@ -256,7 +256,11 @@ class EightSleep:
             # insertion order cannot change which account receives commands.
             return min(
                 self.users.values(),
-                key=lambda user: (user.side != "left", user.side, user.user_id),
+                key=lambda user: (
+                    user.side != "left",
+                    user.side or "",
+                    user.user_id,
+                ),
                 default=None,
             )
 
